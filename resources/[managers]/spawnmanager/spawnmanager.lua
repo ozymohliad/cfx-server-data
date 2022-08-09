@@ -15,19 +15,9 @@ AddEventHandler('getMapDirectives', function(add)
 
             local s, e = pcall(function()
                 -- is this a map or an array?
-                if opts.x then
-                    x = opts.x
-                    y = opts.y
-                    z = opts.z
-                else
-                    x = opts[1]
-                    y = opts[2]
-                    z = opts[3]
-                end
-
-                x = x + 0.0001
-                y = y + 0.0001
-                z = z + 0.0001
+                x = (opts.x or opts[1]) + 0.0001
+                y = (opts.y or opts[2]) + 0.0001
+                z = (opts.z or opts[3]) + 0.0001
 
                 -- get a heading and force it to a float, or just default to null
                 heading = opts.heading and (opts.heading + 0.01) or 0
@@ -40,9 +30,7 @@ AddEventHandler('getMapDirectives', function(add)
                 })
 
                 -- recalculate the model for storage
-                if not tonumber(model) then
-                    model = GetHashKey(model, _r)
-                end
+                model = tonumber(model) or GetHashKey(model, _r)
 
                 -- store the spawn data in the state so we can erase it later on
                 state.add('xyz', { x, y, z })
@@ -99,25 +87,18 @@ function addSpawnPoint(spawn)
     end
 
     -- model (try integer first, if not, hash it)
-    local model = spawn.model
-
-    if not tonumber(spawn.model) then
-        model = GetHashKey(spawn.model)
-    end
+    spawn.model = tonumber(spawn.model) or GetHashKey(spawn.model)
 
     -- is the model actually a model?
-    if not IsModelInCdimage(model) then
+    if not IsModelInCdimage(spawn.model) then
         error("invalid spawn model")
     end
 
-    -- is is even a ped?
+    -- is it even a ped?
     -- not in V?
-    --[[if not IsThisModelAPed(model) then
+    --[[if not IsThisModelAPed(spawn.model) then
         error("this model ain't a ped!")
     end]]
-
-    -- overwrite the model in case we hashed it
-    spawn.model = model
 
     -- add an index
     spawn.idx = spawnNum
@@ -157,31 +138,24 @@ local function freezePlayer(id, freeze)
 
     local ped = GetPlayerPed(player)
 
-    if not freeze then
-        if not IsEntityVisible(ped) then
-            SetEntityVisible(ped, true)
-        end
+    if not freeze == not IsEntityVisible(ped) then
+        SetEntityVisible(ped, not freeze)
+    end
 
-        if not IsPedInAnyVehicle(ped) then
-            SetEntityCollision(ped, true)
-        end
+    SetPlayerInvincible(player, freeze)
+    FreezeEntityPosition(ped, freeze)
+    --SetCharNeverTargetted(ped, freeze)
 
-        FreezeEntityPosition(ped, false)
-        --SetCharNeverTargetted(ped, false)
-        SetPlayerInvincible(player, false)
-    else
-        if IsEntityVisible(ped) then
-            SetEntityVisible(ped, false)
-        end
-
+    if freeze then
         SetEntityCollision(ped, false)
-        FreezeEntityPosition(ped, true)
-        --SetCharNeverTargetted(ped, true)
-        SetPlayerInvincible(player, true)
         --RemovePtfxFromPed(ped)
 
         if not IsPedFatallyInjured(ped) then
             ClearPedTasksImmediately(ped)
+        end
+    else
+        if not IsPedInAnyVehicle(ped) then
+            SetEntityCollision(ped, true)
         end
     end
 end
@@ -195,7 +169,6 @@ function loadScene(x, y, z)
 
     while IsNewLoadSceneActive() do
         networkTimer = GetNetworkTimer()
-
         NetworkUpdateLoadScene()
     end
 end
@@ -213,9 +186,7 @@ function spawnPlayer(spawnIdx, cb)
 
     Citizen.CreateThread(function()
         -- if the spawn isn't set, select a random one
-        if not spawnIdx then
-            spawnIdx = GetRandomIntInRange(1, #spawnPoints + 1)
-        end
+        spawnIdx = spawnIdx or GetRandomIntInRange(1, #spawnPoints + 1)
 
         -- get the spawn from the array
         local spawn
@@ -235,18 +206,13 @@ function spawnPlayer(spawnIdx, cb)
 
         if not spawn.skipFade then
             DoScreenFadeOut(500)
-
-            while not IsScreenFadedOut() do
-                Citizen.Wait(0)
-            end
+            repeat Wait(0) until IsScreenFadedOut()
         end
 
         -- validate the index
         if not spawn then
             Citizen.Trace("tried to spawn at an invalid spawn index\n")
-
             spawnLock = false
-
             return
         end
 
@@ -260,7 +226,6 @@ function spawnPlayer(spawnIdx, cb)
             -- load the model for this spawn
             while not HasModelLoaded(spawn.model) do
                 RequestModel(spawn.model)
-
                 Wait(0)
             end
 
@@ -306,19 +271,13 @@ function spawnPlayer(spawnIdx, cb)
         --ForceLoadingScreen(false)
 
         local time = GetGameTimer()
-
-        while (not HasCollisionLoadedAroundEntity(ped) and (GetGameTimer() - time) < 5000) do
-            Citizen.Wait(0)
-        end
+        repeat Wait(0) until HasCollisionLoadedAroundEntity(ped) or (GetGameTimer() - time) >= 5000
 
         ShutdownLoadingScreen()
 
         if IsScreenFadedOut() then
             DoScreenFadeIn(500)
-
-            while not IsScreenFadedIn() do
-                Citizen.Wait(0)
-            end
+            repeat Wait(0) until IsScreenFadedIn()
         end
 
         -- and unfreeze the player
@@ -341,23 +300,16 @@ local diedAt
 Citizen.CreateThread(function()
     -- main loop thing
     while true do
-        Citizen.Wait(50)
+        Wait(50)
 
         local playerPed = PlayerPedId()
 
         if playerPed and playerPed ~= -1 then
             -- check if we want to autospawn
-            if autoSpawnEnabled then
-                if NetworkIsPlayerActive(PlayerId()) then
-                    if (diedAt and (math.abs(GetTimeDifference(GetGameTimer(), diedAt)) > 2000)) or respawnForced then
-                        if autoSpawnCallback then
-                            autoSpawnCallback()
-                        else
-                            spawnPlayer()
-                        end
-
-                        respawnForced = false
-                    end
+            if autoSpawnEnabled and NetworkIsPlayerActive(PlayerId()) then
+                if (diedAt and (math.abs(GetTimeDifference(GetGameTimer(), diedAt)) > 2000)) or respawnForced then
+                    (autoSpawnCallback or spawnPlayer)()
+                    respawnForced = false
                 end
             end
 
